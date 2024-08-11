@@ -1,0 +1,14 @@
+
+# foders
+res
+output
+result
+cache
+saves
+
+
+# files
+*.pt
+*.pkl
+*.pdf
+*.o

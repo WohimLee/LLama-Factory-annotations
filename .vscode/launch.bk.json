@@ -1,0 +1,13 @@
+{ 
+    "name": "SFT", 
+    "type": "debugpy", 
+    "module": "torch.distributed.run", 
+    "request": "launch", 
+    "console": "integratedTerminal", 
+    "args": [ 
+        "--nproc_per_node", "4",  
+        "/home/xxx/project/LLaMA-Factory/src/llamafactory/launcher.py", 
+        "./lora_sft.yaml"], 
+    "justMyCode": false, 
+    "subProcess": true
+}
