@@ -1,0 +1,53 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    // 可用
+    "version": "0.2.0",
+    "configurations": [
+        
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "module": "torch.distributed.launch",
+            // "program": "src/train.py",
+            "args": [
+                "--nproc_per_node", "1",
+                "src/train.py",
+                "--deepspeed", "./examples/deepspeed/ds_z3_config.json",
+                "--stage", "sft",
+                "--do_train",
+                "--model_name_or_path", "/home/nerf/datav/nlp/models/qwen/Qwen2-0.5B",
+                "--dataset_dir", "./data",
+                "--dataset", "identity",
+                "--template", "qwen",
+                "--finetuning_type", "full",
+                "--output_dir", "./output",
+                "--overwrite_cache", "true",
+                "--overwrite_output_dir", "true", 
+                "--cutoff_len", "1024", 
+                "--preprocessing_num_workers", "16", 
+                "--per_device_train_batch_size", "4",
+                "--per_device_eval_batch_size", "4", 
+                "--gradient_accumulation_steps", "32", 
+                "--lr_scheduler_type", "cosine", 
+                "--logging_steps", "1", 
+                "--warmup_ratio", "0.1", 
+                "--learning_rate", "5e-5", 
+                "--num_train_epochs", "5.0", 
+                "--plot_loss", 
+                "--bf16", 
+                "--val_size", "0.1", 
+                "--eval_steps", "3", 
+                "--evaluation_strategy", "steps",
+            ],
+            "env": {
+                "PYTHONPATH": "{workspaceFolder}",
+                // "CUDA_VISIBLE_DEVICES" : "0"
+            },
+            "console": "integratedTerminal",
+            "justMyCode": false // 允许调试库代码
+        }
+    ]
+}

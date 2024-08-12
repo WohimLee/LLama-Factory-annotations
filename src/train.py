@@ -25,7 +25,7 @@ def _mp_fn(index):
 
 
 if __name__ == "__main__":
-    import os
-    os.environ['RANK'] = str(0)
-    os.environ['GRPC_POLL_STRATEGY'] = 'epoll1'
+    # import os
+    # os.environ['RANK'] = str(0)
+    # os.environ['GRPC_POLL_STRATEGY'] = 'epoll1'
     main()
