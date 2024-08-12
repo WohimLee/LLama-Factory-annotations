@@ -10,16 +10,14 @@
             "name": "Python: Current File",
             "type": "debugpy",
             "request": "launch",
-            // "module": "llamafactory.cli",
-            "program": "${workspaceFolder}/run.py",
+            "module": "llamafactory.cli",
+            // "program": "${workspaceFolder}/src/llamafactory/cli.py",
             "args": [
-                // "train", 
-                // "examples/train_lora/llama3_lora_sft_ds3.yaml",
+                "train", 
+                "examples/train_lora/llama3_lora_sft_ds3.yaml",
             ],
-            "cwd": "${workspaceFolder}",
+            "cwd": "${workspaceFolder}/src",
             "env": {
-                "FORCE_TORCHRUN": "true",
-                "PATH": "/opt/miniconda/envs/llama39/bin:${env:PATH}"
                 // "PYTHONPATH": "${workspaceFolder}",
                 // "CUDA_VISIBLE_DEVICES" : "0"
                 // "PYTHONWARNINGS": "ignore"

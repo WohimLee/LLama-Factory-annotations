@@ -109,7 +109,7 @@ def main():
             
             # 打印初始化分布式任务的信息
             logger.info("Initializing distributed tasks at: {}:{}".format(master_addr, master_port))
-            
+            ################################ TODO ###############################################
             # 使用 subprocess.run 执行 torchrun 命令，进行分布式训练
             process = subprocess.run(
                 (
@@ -126,8 +126,11 @@ def main():
                 ),
                 shell=True,
             )
+            
             # 退出并返回 torchrun 命令的返回码
             sys.exit(process.returncode)
+            ################################ TODO ###############################################
+            
         else:
             # 如果不需要分布式训练，则调用 run_exp 函数，执行单机实验
             run_exp()
