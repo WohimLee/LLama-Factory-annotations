@@ -24,7 +24,7 @@
             "cwd": "${workspaceFolder}",
             "env": {
                 "FORCE_TORCHRUN": "true",
-                "PATH": "/opt/miniconda/envs/llama39/bin:${env:PATH}" // which torchrun 找到的路径
+                "PATH": "/opt/miniconda/envs/llama39/bin:${env:PATH}" // which torchrun 找到的路径, 否则 process = subprocess.run 找不到命令会报错
             },
             "console": "integratedTerminal",
             "justMyCode": false // 允许调试库代码
