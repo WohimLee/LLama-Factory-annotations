@@ -18,23 +18,31 @@
             "name": "Python: Current File",
             "type": "debugpy",
             "request": "launch",
-            // "module": "llamafactory.cli",
-            "program": "${workspaceFolder}/run.py",
+            "program": "${workspaceFolder}/run-debug.py",
             "args": [
-                // "train", 
-                // "examples/train_lora/llama3_lora_sft_ds3.yaml",
             ],
             "cwd": "${workspaceFolder}",
             "env": {
                 "FORCE_TORCHRUN": "true",
-                "PATH": "/opt/miniconda/envs/llama39/bin:${env:PATH}"
-                // "PYTHONPATH": "${workspaceFolder}",
-                // "CUDA_VISIBLE_DEVICES" : "0"
-                // "PYTHONWARNINGS": "ignore"
+                "PATH": "/opt/miniconda/envs/llama39/bin:${env:PATH}" // which torchrun 找到的路径
             },
             "console": "integratedTerminal",
             "justMyCode": false // 允许调试库代码
         }
     ]
 }
+```
+
+>run-debug.py
+```py
+# 用来调试 llamafactory-cli 命令, 
+# 也就是 src/llamafactory/cli.py 里面的 main 函数
+
+import sys
+from llamafactory.cli import main
+
+sys.argv = ["llamafactory-cli", "train", "examples/train_full/llama3_full_sft_ds3.yaml"]
+
+if __name__ == "__main__":
+    main()
 ```

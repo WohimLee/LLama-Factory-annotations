@@ -4,7 +4,7 @@
 import sys
 from llamafactory.cli import main
 
-# 模拟命令行参数，比如你想调试 'train' 命令
+# LLaMA-Factory 官方的全量微调命令
 sys.argv = ["llamafactory-cli", "train", "examples/train_full/llama3_full_sft_ds3.yaml"]
 
 if __name__ == "__main__":
