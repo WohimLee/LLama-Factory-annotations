@@ -3,6 +3,15 @@
 官方原版仓库: https://github.com/hiyouga/LLaMA-Factory
 
 ## 调试
+所有调试开始前修改一下这个文件：
+- src/llamafactory/hparams/parser.py
+
+```py
+def _parse_train_args(args: Optional[Dict[str, Any]] = None): #  -> _TRAIN_CLS
+    parser = HfArgumentParser(_TRAIN_ARGS)
+    parser.add_argument('--local-rank', type=int, default=0, help="Local rank for distributed training") # 添加这行
+    return _parse_args(parser, args)
+```
 ### 1 调试 cli.py
 >命令
 ```sh
