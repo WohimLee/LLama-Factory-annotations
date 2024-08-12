@@ -11,7 +11,7 @@
             "type": "debugpy",
             "request": "launch",
             // "module": "llamafactory.cli",
-            "program": "${workspaceFolder}/run.py",
+            "program": "${workspaceFolder}/run-debug.py",
             "args": [
                 // "train", 
                 // "examples/train_lora/llama3_lora_sft_ds3.yaml",
@@ -19,7 +19,7 @@
             "cwd": "${workspaceFolder}",
             "env": {
                 "FORCE_TORCHRUN": "true",
-                "PATH": "/opt/miniconda/envs/llama39/bin:${env:PATH}" // which torchrun 找到的路径, 否则 process = subprocess.run 找不到命令会报错
+                "PATH": "/opt/miniconda/envs/llama39/bin:${env:PATH}" 
                 // "PYTHONPATH": "${workspaceFolder}",
                 // "CUDA_VISIBLE_DEVICES" : "0"
                 // "PYTHONWARNINGS": "ignore"
