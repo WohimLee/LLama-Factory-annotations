@@ -5,6 +5,7 @@ output
 result
 cache
 saves
+__pycache__
 
 
 # files

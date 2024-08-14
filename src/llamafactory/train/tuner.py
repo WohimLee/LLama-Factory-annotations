@@ -53,7 +53,7 @@ def run_exp(args: Optional[Dict[str, Any]] = None, callbacks: List["TrainerCallb
         run_pt(model_args, data_args, training_args, finetuning_args, callbacks)
     elif finetuning_args.stage == "sft":
         # 如果阶段为 "sft"（监督微调阶段），调用 run_sft 函数
-        run_sft(model_args, data_args, training_args, finetuning_args, generating_args, callbacks)
+        run_sft(model_args, data_args, training_args, finetuning_args, generating_args)
     elif finetuning_args.stage == "rm":
         # 如果阶段为 "rm"（奖励模型训练阶段），调用 run_rm 函数
         run_rm(model_args, data_args, training_args, finetuning_args, callbacks)
