@@ -203,36 +203,53 @@ def get_dataset(
     tokenizer: "PreTrainedTokenizer",
     processor: Optional["ProcessorMixin"] = None,
 ) -> "DatasetModule":
+    
+    # 获取模板并修正分词器
     template = get_template_and_fix_tokenizer(tokenizer, data_args.template, data_args.tool_format)
+    
+    # 如果设置了 train_on_prompt 选项并且模板不支持 efficient_eos，则抛出错误
     if data_args.train_on_prompt and template.efficient_eos:
         raise ValueError("Current template does not support `train_on_prompt`.")
 
-    # Load tokenized dataset
+    # 如果指定了已标记数据的路径，尝试加载已标记的数据集
     if data_args.tokenized_path is not None:
+        # 首先检查指定的路径中是否存在已标记的数据
         if has_tokenized_data(data_args.tokenized_path):
-            logger.warning("Loading dataset from disk will ignore other data arguments.")
+            # 如果从磁盘加载数据集，将忽略其他数据参数，因此发出警告
+            logger.warning("从磁盘加载数据集时将忽略其他数据参数。")
+            
+            # 从指定路径加载已标记的数据集，加载后 dataset_dict 是一个包含多个数据集（如训练集、验证集）的字典
             dataset_dict: "DatasetDict" = load_from_disk(data_args.tokenized_path)
-            logger.info("Loaded tokenized dataset from {}.".format(data_args.tokenized_path))
+            logger.info("已从 {} 加载了标记的数据集。".format(data_args.tokenized_path))
 
+            # 初始化一个空的字典，用于存储训练数据集和验证数据集
             dataset_module: Dict[str, "Dataset"] = {}
+            
+            # 如果加载的数据集中包含训练数据集，将其存储到 dataset_module 中
             if "train" in dataset_dict:
-                dataset_module["train_dataset"] = dataset_dict["train"]
+                dataset_module["train_dataset"] = dataset_dict["train"]  # 加载训练数据集
+                
+            # 如果加载的数据集中包含验证数据集，将其存储到 dataset_module 中
             if "validation" in dataset_dict:
-                dataset_module["eval_dataset"] = dataset_dict["validation"]
+                dataset_module["eval_dataset"] = dataset_dict["validation"]  # 加载验证数据集
 
+            # 如果启用了流式处理，将每个数据集转换为可迭代的数据集（流式数据集）
             if data_args.streaming:
                 dataset_module = {k: v.to_iterable_dataset() for k, v in dataset_module.items()}
-
+            
+            # 返回包含训练和验证数据集的 dataset_module 字典
             return dataset_module
-
+        
+        # 如果启用了流处理，但试图保存数据集到磁盘，这是不被允许的，因此抛出错误
         if data_args.streaming:
-            raise ValueError("Turn off `streaming` when saving dataset to disk.")
+            raise ValueError("在保存数据集到磁盘时，请关闭 `streaming` 选项。")
 
-    # Load and preprocess dataset
+    # 加载数据集
     with training_args.main_process_first(desc="load dataset"):
         dataset = _get_merged_dataset(data_args.dataset, model_args, data_args, training_args, stage)
         eval_dataset = _get_merged_dataset(data_args.eval_dataset, model_args, data_args, training_args, stage)
 
+    # 对数据集进行预处理
     with training_args.main_process_first(desc="pre-process dataset"):
         dataset = _get_preprocessed_dataset(
             dataset, data_args, training_args, stage, template, tokenizer, processor, is_eval=False
@@ -241,36 +258,40 @@ def get_dataset(
             eval_dataset, data_args, training_args, stage, template, tokenizer, processor, is_eval=True
         )
 
+        # 如果设置了验证集大小，对数据集进行拆分
         if data_args.val_size > 1e-6:
             dataset_dict = split_dataset(dataset, data_args, seed=training_args.seed)
         else:
             dataset_dict = {}
             if dataset is not None:
+                # 如果启用了流处理，随机打乱数据集
                 if data_args.streaming:
                     dataset = dataset.shuffle(buffer_size=data_args.buffer_size, seed=training_args.seed)
 
-                dataset_dict["train"] = dataset
+                dataset_dict["train"] = dataset # 保存训练数据集
 
             if eval_dataset is not None:
+                # 如果启用了流处理，随机打乱验证集
                 if data_args.streaming:
                     eval_dataset = eval_dataset.shuffle(buffer_size=data_args.buffer_size, seed=training_args.seed)
 
-                dataset_dict["validation"] = eval_dataset
+                dataset_dict["validation"] = eval_dataset   # 保存验证数据集
 
-            dataset_dict = DatasetDict(dataset_dict)
+            dataset_dict = DatasetDict(dataset_dict)    # 将数据集字典封装为 DatasetDict
 
+        # 如果指定了已标记数据路径，并且需要保存，保存数据集到磁盘
         if data_args.tokenized_path is not None:
             if training_args.should_save:
-                dataset_dict.save_to_disk(data_args.tokenized_path)
+                dataset_dict.save_to_disk(data_args.tokenized_path) # 保存数据集到磁盘
                 logger.info("Tokenized dataset saved at {}.".format(data_args.tokenized_path))
                 logger.info("Please restart the training with `tokenized_path: {}`.".format(data_args.tokenized_path))
 
-            sys.exit(0)
+            sys.exit(0) # 退出程序
 
         dataset_module = {}
         if "train" in dataset_dict:
-            dataset_module["train_dataset"] = dataset_dict["train"]
+            dataset_module["train_dataset"] = dataset_dict["train"]     # 加载训练数据集
         if "validation" in dataset_dict:
-            dataset_module["eval_dataset"] = dataset_dict["validation"]
+            dataset_module["eval_dataset"] = dataset_dict["validation"] # 加载验证数据集
 
-        return dataset_module
+        return dataset_module   # 返回训练和验证数据集
