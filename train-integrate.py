@@ -6037,7 +6037,7 @@ def run_sft(
 
 
 if __name__ == "__main__":
-
+    os.environ["WANDB_DISABLED"] = "true"
     callbacks: List["TrainerCallback"] = []
     # LLaMA-Factory 官方的全量微调命令
     sys.argv = ["FORCE_TORCHRUN=1", "examples/train_full/llama3_full_sft_ds3.yaml"]
