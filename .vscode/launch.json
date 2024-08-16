@@ -10,21 +10,13 @@
             "name": "Python: Current File",
             "type": "debugpy",
             "request": "launch",
-            // "module": "llamafactory.cli",
             "program": "/usr/local/miniconda3/envs/llama39/bin/torchrun",  // torchrun 的完整路径
             "args": [
-                // "--nnodes", "1",
-                // "--node_rank", "0",
-                // "--nproc_per_node", "1",
-                // "--master_addr", "127.0.0.1",
-                // "--master_port", "20570",
-                "/root/datav/nlp/LLama-Factory-annotations/run_sft-debug.py",  // 脚本路径
-                // "examples/train_full/llama3_full_sft_ds3.yaml" 
+                "/root/datav/nlp/LLama-Factory-annotations/train-integrate.py",  // 脚本路径
             ],
             "cwd": "${workspaceFolder}",
             "env": {
-                // "FORCE_TORCHRUN": "true",
-                // "PYTHONPATH": "${workspaceFolder}/src",
+
                 "PATH": "/usr/local/miniconda3/envs/llama39/bin:${env:PATH}" 
             },
             "subProcess": true,
