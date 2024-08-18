@@ -12,8 +12,8 @@
             "request": "launch",
             "program": "/usr/local/miniconda3/envs/llama39/bin/torchrun",  // torchrun 的完整路径
             "args": [
-                "/root/datav/nlp/LLama-Factory-annotations/train-integrate.py",  // 脚本路径
-                // "/root/datav/nlp/LLama-Factory-annotations/train-100.py",  // 脚本路径
+                // "/root/datav/nlp/LLama-Factory-annotations/train-integrate.py",  // 脚本路径
+                "/root/datav/nlp/LLama-Factory-annotations/train-100.py",  // 脚本路径
 
             ],
             "cwd": "${workspaceFolder}",
@@ -23,7 +23,7 @@
             },
             "subProcess": true,
             "console": "integratedTerminal",
-            "justMyCode": true // 允许调试库代码
+            "justMyCode": false // 允许调试库代码
         }
     ]
 }

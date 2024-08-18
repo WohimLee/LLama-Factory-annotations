@@ -2,8 +2,15 @@
 import re
 import os
 import sys
+import math
 import json
+import torch
+import inspect
+import matplotlib.pyplot as plt
+
 from typing import List, Union, Dict, Any, Literal, Optional, Sequence, Tuple, Set
+from types import MethodType
+
 from datasets import DatasetDict, Dataset, IterableDataset, Features
 from datasets import load_dataset
 from functools import partial
@@ -12,9 +19,11 @@ from dataclasses import dataclass, field
 
 from transformers import HfArgumentParser, Seq2SeqTrainingArguments
 from transformers import PreTrainedModel, PreTrainedTokenizer
-from transformers import AutoTokenizer
-from transformers import training_args
+from transformers import AutoTokenizer, DataCollatorForSeq2Seq
+from transformers import Seq2SeqTrainer
 from transformers import AutoConfig, AutoModelForCausalLM
+from transformers import InfNanRemoveLogitsProcessor, LogitsProcessorList
+
 
 from abc import ABC, abstractmethod
 
@@ -22,6 +31,7 @@ from abc import ABC, abstractmethod
 SLOTS = Sequence[Union[str, Set[str], Dict[str, str]]]
 
 IGNORE_INDEX = -100
+TRAINER_STATE_NAME = "trainer_state.json"
 
 DEFAULT_TOOL_PROMPT = (
     "You have access to the following tools:\n{tool_text}"
@@ -37,6 +47,62 @@ GLM4_TOOL_PROMPT = (
     "你是一个名为 ChatGLM 的人工智能助手。你是基于智谱AI训练的语言模型 GLM-4 模型开发的，"
     "你的任务是针对用户的问题和要求提供适当的答复和支持。# 可用工具{tool_text}"
 )
+
+
+def prepare_4d_attention_mask(attention_mask_with_indices: "torch.Tensor", dtype: "torch.dtype") -> "torch.Tensor":
+    r"""
+    Expands the attention mask with indices from (batch_size, seq_len) to (batch_size, 1, seq_len, seq_len),
+    while handles packed sequences and transforms the mask to lower triangular form to prevent future peeking.
+
+    e.g.
+    ```python
+    # input
+    [[1, 1, 2, 2, 2, 0]]
+    # output
+    [
+        [
+            [
+                [o, x, x, x, x, x],
+                [o, o, x, x, x, x],
+                [x, x, o, x, x, x],
+                [x, x, o, o, x, x],
+                [x, x, o, o, o, x],
+                [x, x, x, x, x, x],
+            ]
+        ]
+    ]
+    ```
+    where `o` equals to `0.0`, `x` equals to `min_dtype`.
+    """
+    bsz, seq_len = attention_mask_with_indices.size()
+    min_dtype = torch.finfo(dtype).min
+    expanded_mask = attention_mask_with_indices[:, None, None, :].expand(bsz, 1, seq_len, seq_len)
+    # Create a binary mask from the original mask where zeros remain zeros and all other values are set to one
+    padding_mask = torch.where(expanded_mask != 0, 1, 0)
+    # Create a block-diagonal mask.
+    attention_mask_4d = torch.eq(expanded_mask, expanded_mask.transpose(-1, -2)).int() * padding_mask
+    # Use the lower triangular mask to zero out the upper triangular part
+    attention_mask_4d *= torch.tril(torch.ones((seq_len, seq_len), dtype=torch.long))
+    # Invert the attention mask.
+    attention_mask_4d = torch.where(attention_mask_4d != 0, torch.tensor(0, dtype=dtype), min_dtype)
+    return attention_mask_4d
+
+@dataclass
+class SFTDataCollatorWith4DAttentionMask(DataCollatorForSeq2Seq):
+    r"""
+    Data collator for 4d attention mask.
+    """
+
+    block_diag_attn: bool = False
+    attn_implementation: Literal["eager", "sdpa", "flash_attention_2"] = "eager"
+    compute_dtype: "torch.dtype" = torch.float32
+
+    def __call__(self, features: Sequence[Dict[str, Any]]) -> Dict[str, "torch.Tensor"]:
+        features = super().__call__(features)
+        if self.block_diag_attn and self.attn_implementation != "flash_attention_2":
+            features["attention_mask"] = prepare_4d_attention_mask(features["attention_mask"], self.compute_dtype)
+
+        return features
 
 
 @dataclass
@@ -607,11 +673,6 @@ def _get_preprocessed_dataset(dataset: Optional[Union["Dataset", "IterableDatase
     return dataset
 
 
-def _add_or_replace_eos_token(tokenizer: "PreTrainedTokenizer", eos_token: str):
-    
-    num_added_tokens = tokenizer.add_special_tokens({"eos_token": eos_token})
-    
-
     
 def _get_jinja_template(template, tokenizer):
     jinja_template = ""
@@ -636,13 +697,68 @@ def _get_jinja_template(template, tokenizer):
 
 
 
+def _gradient_checkpointing_enable(
+    self: "PreTrainedModel", gradient_checkpointing_kwargs: Optional[Dict[str, Any]] = None
+) -> None:
+    r"""
+    Activates gradient checkpointing for the current model.
+
+    Modification of the original method to enable gradient checkpointing for block-wise optimizer.
+    """
+    from torch.utils.checkpoint import checkpoint
+
+    if not self.supports_gradient_checkpointing:
+        raise ValueError("{} does not support gradient checkpointing.".format(self.__class__.__name__))
+
+    if gradient_checkpointing_kwargs is None:
+        gradient_checkpointing_kwargs = {"use_reentrant": True}
+
+    gradient_checkpointing_func = partial(checkpoint, **gradient_checkpointing_kwargs)
+
+    def custom_gradient_checkpointing_func(func, *args, **kwargs):
+        module: "torch.nn.Module" = func.__self__
+
+        if any(param.requires_grad for param in module.parameters()):
+            for arg in args:
+                if torch.is_tensor(arg) and torch.is_floating_point(arg):
+                    arg.requires_grad_(True)
+
+        return gradient_checkpointing_func(func, *args, **kwargs)
+
+    if "value" in inspect.signature(self._set_gradient_checkpointing).parameters:  # old GC format
+        self.apply(partial(self._set_gradient_checkpointing, value=True))
+        self.enable_input_require_grads()
+        print("You are using the old GC format, some features (e.g. BAdam) will be invalid.")
+    else:  # have already enabled input require gradients
+        self._set_gradient_checkpointing(enable=True, gradient_checkpointing_func=custom_gradient_checkpointing_func)
+
+
+
+def prepare_model_for_training(model: "PreTrainedModel"):
+    model.gradient_checkpointing_enable = MethodType(_gradient_checkpointing_enable, model)
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": True})
+    setattr(model.config, "use_cache", False)  # turn off when gradient checkpointing is enabled
+    print("Gradient checkpointing enabled.")
+
 def load_model(
     tokenizer: "PreTrainedTokenizer"
 ) -> "PreTrainedModel":
 
-    model = AutoModelForCausalLM.from_pretrained(**init_kwargs)
+    init_kwargs = {'trust_remote_code': True, 'cache_dir': None, 'revision': 'main', 'token': None}
+    config = AutoConfig.from_pretrained('/root/datav/nlp/model/qwen/Qwen2-0.5B', **init_kwargs)
+    init_kwargs["low_cpu_mem_usage"] = False
+    init_kwargs["config"] = config
+    init_kwargs["pretrained_model_name_or_path"] = '/root/datav/nlp/model/qwen/Qwen2-0.5B'
+    
+    model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(**init_kwargs)
+    gen_config = model.generation_config
+    prepare_model_for_training(model)
 
-
+    try:
+        model.add_model_tags(["llama-factory"])
+    except Exception:
+        print("Cannot properly tag the model.")
+        
     return model
 
 def get_template_and_fix_tokenizer(tokenizer: "PreTrainedTokenizer", name: Optional[str] = None):
@@ -666,6 +782,64 @@ def get_dataset(stage: Literal["pt", "sft", "rm", "ppo", "kto"], tokenizer: "Pre
     dataset_module["train_dataset"], dataset_module["eval_dataset"] = dataset_dict["train"], dataset_dict["validation"]
     return dataset_module
 
+class CustomSeq2SeqTrainer(Seq2SeqTrainer):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+def get_logits_processor() -> "LogitsProcessorList":
+    logits_processor = LogitsProcessorList()
+    logits_processor.append(InfNanRemoveLogitsProcessor())
+    return logits_processor
+
+
+def smooth(scalars: List[float]) -> List[float]:
+    r"""
+    EMA implementation according to TensorBoard.
+    """
+    if len(scalars) == 0:
+        return []
+
+    last = scalars[0]
+    smoothed = []
+    weight = 1.8 * (1 / (1 + math.exp(-0.05 * len(scalars))) - 0.5)  # a sigmoid function
+    for next_val in scalars:
+        smoothed_val = last * weight + (1 - weight) * next_val
+        smoothed.append(smoothed_val)
+        last = smoothed_val
+    return smoothed
+
+
+def plot_loss(save_dictionary: os.PathLike, keys: List[str] = ["loss"]) -> None:
+    r"""
+    Plots loss curves and saves the image.
+    """
+    plt.switch_backend("agg")
+    with open(os.path.join(save_dictionary, TRAINER_STATE_NAME), "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    for key in keys:
+        steps, metrics = [], []
+        for i in range(len(data["log_history"])):
+            if key in data["log_history"][i]:
+                steps.append(data["log_history"][i]["step"])
+                metrics.append(data["log_history"][i][key])
+
+        if len(metrics) == 0:
+            print(f"No metric {key} to plot.")
+            continue
+
+        plt.figure()
+        plt.plot(steps, metrics, color="#1f77b4", alpha=0.4, label="original")
+        plt.plot(steps, smooth(metrics), color="#1f77b4", label="smoothed")
+        plt.title("training {} of {}".format(key, save_dictionary))
+        plt.xlabel("step")
+        plt.ylabel(key)
+        plt.legend()
+        figure_path = os.path.join(save_dictionary, "training_{}.png".format(key.replace("/", "_")))
+        plt.savefig(figure_path, format="png", dpi=100)
+        print("Figure saved at:", figure_path)
+
+
 def run_sft():
     tokenizer_module = load_tokenizer() # 加载分词器模块，根据模型参数进行初始化
     tokenizer = tokenizer_module["tokenizer"]  # 提取分词器对象
@@ -675,12 +849,58 @@ def run_sft():
     # 根据分词器和其他参数加载预训练模型，准备进行微调
     model = load_model(tokenizer)
     
+    # 初始化数据整理器，处理输入数据的格式和注意力掩码
+    data_collator = SFTDataCollatorWith4DAttentionMask(
+        tokenizer=tokenizer,                                        # 使用已经加载的分词器
+        pad_to_multiple_of=8,   # 训练时的填充长度要求
+        label_pad_token_id=IGNORE_INDEX,  # 标签填充
+        block_diag_attn=False,                 # 是否使用块对角注意力机制
+        attn_implementation=getattr(model.config, "_attn_implementation", None),  # 注意力机制的具体实现
+        compute_dtype=torch.bfloat16,                     # 计算数据类型，如float32、float16等
+    )
     
-    pass
+    # 评估指标模块的初始化
+    metric_module = {}
+    training_args = Seq2SeqTrainingArguments(
+        output_dir="/root/datav/nlp/model/output",
+        per_device_train_batch_size=2,  # 设置训练时每个设备的 batch size
+        per_device_eval_batch_size=2,  # 设置验证时每个设备的 batch size
+        num_train_epochs=3,  # 设置训练的 epoch 数
+        evaluation_strategy="steps",  # 设置评估策略为每隔几步进行评估
+        eval_steps=10,  # 设置评估间隔的步数
+    )
+    # 初始化自定义的 Seq2SeqTrainer 训练器
+    trainer = CustomSeq2SeqTrainer(
+        model=model,                        # 要训练的模型
+        args=training_args,
+        data_collator=data_collator,        # 数据整理器，用于处理输入数据
+        **dataset_module,                   # 解包数据集模块，传递给训练器
+        **tokenizer_module,                 # 解包分词器模块，传递给训练器
+        **metric_module,                    # 解包评估指标模块，传递给训练器
+    )
+    
+    gen_kwargs = {'do_sample': True, 'temperature': 0.95, 'top_p': 0.7, 'top_k': 50, 'num_beams': 1, 'max_new_tokens': 1024, 'repetition_penalty': 1.0, 'length_penalty': 1.0, 'default_system': None}
+    gen_kwargs["eos_token_id"] = [tokenizer.eos_token_id] + tokenizer.additional_special_tokens_ids  # 设置结束标记（eos token）的ID，包含标准结束标记及额外的特殊标记
+    gen_kwargs["pad_token_id"] = tokenizer.pad_token_id         # 设置填充标记（pad token）的ID，确保生成的序列长度一致
+    gen_kwargs["logits_processor"] = get_logits_processor()     # 获取并设置 logits 处理器，用于在生成过程中对 logits 进行处理
+
+    # Training 训练过程
+    train_result = trainer.train(resume_from_checkpoint=None)  # 开始训练，可能从检查点恢复
+    trainer.save_model()                                    # 保存训练后的模型
+    trainer.log_metrics("train", train_result.metrics)      # 记录训练过程中的指标（如损失、准确率等）
+    trainer.save_metrics("train", train_result.metrics)     # 保存这些训练指标到磁盘
+    trainer.save_state()                                    # 保存训练状态（如优化器状态、随机种子等），便于后续继续训练
+    # 如果当前进程是主要进程（在分布式训练中），并且要求绘制损失曲线
+    if trainer.is_world_process_zero():
+        plot_loss('/root/datav/nlp/model/output', keys=["loss", "eval_loss", "eval_accuracy"])  # 绘制并保存损失曲线图
+    
+    # Evaluation 评估过程
+    metrics = trainer.evaluate(metric_key_prefix="eval", **gen_kwargs)  # 执行评估，并根据生成的关键字参数进行解码
+    trainer.log_metrics("eval", metrics)    # 记录评估过程中的指标
+    trainer.save_metrics("eval", metrics)   # 保存这些评估指标到磁盘
+    
 
 
 if __name__ == "__main__":
     os.environ["WANDB_DISABLED"] = "true"
-
-
     run_sft()
